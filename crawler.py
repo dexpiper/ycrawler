@@ -5,6 +5,7 @@ import time
 import asyncio
 import hashlib
 import logging
+import mimetypes
 import subprocess
 from urllib.parse import urljoin
 from dataclasses import dataclass
@@ -117,7 +118,8 @@ def parse_comments_page(html: str) -> list[str]:
         if not link:
             continue
         link = link['href']
-        if link.startswith('http') and not len(link) > 150:
+        m_type, _ = mimetypes.guess_type(link)  # we want only html
+        if link.startswith('http') and not m_type:
             result_list.append(link)
     result_list = list(set(result_list))
     logging.debug('Parsing result list length: %s' % len(result_list))
@@ -174,10 +176,10 @@ async def register_and_create(newspiece):
     comments_page = links[0]
     logging.debug('Ask comments for %s' % newspiece.id)
     comments_html = await download_page(comments_page)
-    print(comments_html[:100])
+
     logging.debug('Parsing comments for %s' % newspiece.id)
     links_from_comments = parse_comments_page(comments_html)
-    print(links_from_comments)
+
     logging.info(
         'Got %s links from comments %s' % (len(links_from_comments),
                                            newspiece.id)

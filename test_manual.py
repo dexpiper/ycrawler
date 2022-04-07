@@ -37,6 +37,6 @@ if __name__ == '__main__':
                         datefmt='%Y.%m.%d %H:%M:%S')
     links = [PATTERN.format(_id) for _id in ids]
     asyncio.run(asyncio.wait(
-        [via_crawler(link) for link in links[28:]]
+        [via_crawler(link) for link in links]
         )
     )
