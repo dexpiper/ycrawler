@@ -8,7 +8,7 @@ from crawler import parse_comments_page
 from crawler import download_page
 
 
-LINK = 'https://news.ycombinator.com/item?id=30942342'
+LINK = 'https://news.ycombinator.com/item?id=30943039'
 PATTERN = 'https://news.ycombinator.com/item?id={}'
 ids = [_id for _id in os.listdir('downloads')]
 

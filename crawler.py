@@ -130,7 +130,7 @@ async def fetch(session, page):
     html = ''
     try:
         async with session.get(page) as response:
-            html = await response.text(encoding='utf-8')
+            html = await response.text()
     except asyncio.TimeoutError:
         logging.error('Timeout error. Cannot get %s' % page)
     except ClientResponseError:
