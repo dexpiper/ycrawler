@@ -25,6 +25,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=5)
 MAX_CONNECTIONS = 5
 MAX_RETRY = 3
 MAX_WORKERS = 5
+PERIOD = 60
 DOWNLOADS_DIR = 'downloads'
 number_pattern = re.compile(r'\n(\d{1,2})\.')
 name_pattern = re.compile(r'\n\d+\. (.*)')
@@ -245,7 +246,9 @@ async def cycle():
 
 
 async def main():
-    await cycle()
+    while True:
+        await cycle()
+        await asyncio.sleep(PERIOD)
 
 
 def runtest():
