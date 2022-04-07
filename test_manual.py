@@ -8,7 +8,7 @@ from crawler import parse_comments_page
 from crawler import download_page
 
 
-LINK = 'https://news.ycombinator.com/item?id=30943466'
+LINK = 'https://news.ycombinator.com/item?id=30942342'
 PATTERN = 'https://news.ycombinator.com/item?id={}'
 ids = [_id for _id in os.listdir('downloads')]
 
@@ -35,8 +35,9 @@ if __name__ == '__main__':
                         level=logging.DEBUG,
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
-    links = [PATTERN.format(_id) for _id in ids]
-    asyncio.run(asyncio.wait(
-        [via_crawler(link) for link in links]
-        )
-    )
+    # links = [PATTERN.format(_id) for _id in ids]
+    # asyncio.run(asyncio.wait(
+    #    [via_crawler(link) for link in links]
+    #    )
+    # )
+    asyncio.run(via_crawler(LINK))
