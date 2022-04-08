@@ -8,13 +8,14 @@ import hashlib
 import logging
 import mimetypes
 from urllib.parse import urljoin
-from dataclasses import dataclass
 from optparse import OptionParser
 
 import aiohttp
 import aiofiles
 import aiofiles.os
 from bs4 import BeautifulSoup
+
+from thetypes import NewsItem, Counter
 
 
 ROOTPAGE = 'https://news.ycombinator.com/'
@@ -26,14 +27,7 @@ PERIOD = 60  # in seconds
 DOWNLOADS_DIR = 'downloads'
 number_pattern = re.compile(r'\n(\d{1,2})\.')
 name_pattern = re.compile(r'\n\d+\. (.*)')
-
-
-@dataclass
-class NewsItem:
-    name: str = None
-    link: str = None
-    id: str = None
-    comments_page: str = None
+counter = Counter()
 
 
 def get_filename(filename: str):
@@ -61,9 +55,12 @@ async def save_file(newsdir, filename, content):
     path = '/'.join((DOWNLOADS_DIR, newsdir, filename))
     if os.path.exists(path):
         logging.debug('File %s already exists' % filename)
+        return
     async with aiofiles.open(path, 'w') as f:
         await f.write(content)
     logging.debug('File %s saved' % filename)
+    global counter
+    await counter.incr_files()
 
 
 async def make_dirs(names: str or list[str]):
@@ -135,7 +132,7 @@ async def fetch(session, page):
     return html
 
 
-async def download_page(page, client=None):
+async def download_page(page, client=None, register_count=True):
     html = ''
     logging.debug('Sheduled downloading %s...' % page[:20])
     if not client:
@@ -143,6 +140,9 @@ async def download_page(page, client=None):
     async with client:
         html = await fetch(client, page)
         logging.debug('Success: %s...' % page[:20])
+    if html and register_count:
+        global counter
+        await counter.incr_download()
     return html
 
 
@@ -160,12 +160,15 @@ async def slow_download(url: str, sema: asyncio.Semaphore,
         try:
             logging.debug('Waiting for download slot')
             async with sema:
-                result = await download_page(url)
+                result = await download_page(url, register_count=False)
                 if error_condition(result):
                     raise ConnectionRefusedError(
                         'Server not able to serve reqs')
         except ConnectionRefusedError:
             await asyncio.sleep(random.randint(1, 15)/10 + i/2)
+    if result:
+        global counter
+        await counter.incr_download()
     return result
 
 
@@ -244,6 +247,8 @@ async def worker(name, queue):
 
 
 async def cycle():
+    global counter
+    await counter.zero()
     logging.info('Getting news list...')
     main_html = await download_page(ROOTPAGE)
     news_list = parse_news_list(main_html)
@@ -257,7 +262,7 @@ async def cycle():
     ]
     await asyncio.gather(*registrators, return_exceptions=True)
 
-    logging('Init downloading...')
+    logging.info('Init downloading...')
     queue = asyncio.Queue(maxsize=10)
     tasks = []
     for i in range(MAX_WORKERS):
@@ -279,7 +284,13 @@ async def cycle():
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    logging.info('Download complete')
+    logging.info(
+        'Total downloaded: %s; '
+        'total new pages saved: %s' % (
+            counter.total_downloads,
+            counter.total_saved_files
+        )
+    )
 
 
 async def main():
