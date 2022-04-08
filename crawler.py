@@ -7,7 +7,6 @@ import asyncio
 import hashlib
 import logging
 import mimetypes
-import subprocess
 from urllib.parse import urljoin
 from dataclasses import dataclass
 from optparse import OptionParser
@@ -16,9 +15,6 @@ import aiohttp
 import aiofiles
 import aiofiles.os
 from bs4 import BeautifulSoup
-from aiohttp.client_exceptions import (ClientResponseError,
-                                       InvalidURL,
-                                       ClientConnectorCertificateError)
 
 
 ROOTPAGE = 'https://news.ycombinator.com/'
@@ -133,16 +129,9 @@ async def fetch(session, page):
     try:
         async with session.get(page) as response:
             html = await response.text()
-    except asyncio.TimeoutError:
-        logging.error('Timeout error. Cannot get %s' % page)
-    except ClientResponseError:
-        logging.error('Bad response. Cannot get %s.' % page)
-    except InvalidURL:
-        logging.error('Url invalid. Cannot get %s.' % page)
-    except ClientConnectorCertificateError:
-        logging.error('Certificate error. Cannot get %s.' % page)
-    except UnicodeDecodeError:
-        logging.error('Decode error. Cannot get %s.' % page)
+    except Exception as exc:
+        err = type(exc).__name__
+        logging.error('%s: Cannot get %s' % (err, page))
     return html
 
 
@@ -154,8 +143,6 @@ async def download_page(page, client=None):
     async with client:
         html = await fetch(client, page)
         logging.debug('Success: %s...' % page[:20])
-    if not html:
-        logging.error('Got empty html')
     return html
 
 
@@ -270,6 +257,7 @@ async def cycle():
     ]
     await asyncio.gather(*registrators, return_exceptions=True)
 
+    logging('Init downloading...')
     queue = asyncio.Queue(maxsize=10)
     tasks = []
     for i in range(MAX_WORKERS):
@@ -291,6 +279,7 @@ async def cycle():
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    logging.info('Download complete')
 
 
 async def main():
@@ -299,14 +288,8 @@ async def main():
         await asyncio.sleep(PERIOD)
 
 
-def runtest():
-    command = ['python', '-m', 'unittest', '-v']
-    subprocess.run(command)
-
-
 if __name__ == '__main__':
     op = OptionParser()
-    op.add_option("-t", "--test", action="store_true", default=False)
     op.add_option("-d", "--debug", action="store_true", default=False)
     op.add_option("-l", "--log", action="store", default=None)
     opts, args = op.parse_args()
@@ -316,9 +299,6 @@ if __name__ == '__main__':
                         ),
                         format='[%(asctime)s] %(levelname).1s %(message)s',
                         datefmt='%Y.%m.%d %H:%M:%S')
-    if opts.test:
-        runtest()
-        sys.exit(0)
     logging.info('Ycrawler started with options: %s' % opts)
     try:
         start = time.time()
