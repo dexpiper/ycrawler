@@ -159,7 +159,43 @@ async def download_page(page, client=None):
     return html
 
 
-async def register_and_create(newspiece, sema):
+async def slow_download(url: str, sema: asyncio.Semaphore,
+                        target_name: str = 'page',
+                        error_condition=lambda x: False,
+                        retry_for: int = MAX_RETRY):
+    """
+    Use to download huge amount of separate html's from single root.
+    * error_condition should be a func returning
+        True or False
+    """
+    result = ''
+    for i in range(retry_for):
+        try:
+            logging.debug('Waiting for download slot')
+            async with sema:
+                result = await download_page(url)
+                if error_condition(result):
+                    raise ConnectionRefusedError(
+                        'Server not able to serve reqs')
+        except ConnectionRefusedError:
+            await asyncio.sleep(random.randint(1, 15)/10 + i/2)
+    return result
+
+
+async def register(newspiece: NewsItem, sema: asyncio.Semaphore):
+    """
+    Register a newspiece in file system:
+    * make folder with news <id> (if no folder)
+    * make a file <links.txt> in that folder (if no file)
+        and save there the comments url and news url.
+    * read urls from <links.txt>
+    * download and parse comments
+    * get set difference {new urls} - {old urls}
+    * save new links in <links.txt>
+    """
+
+    # Registering newspiece in file system.
+    # file <links.txt> is used to store links
     files = os.listdir('/'.join((DOWNLOADS_DIR, newspiece.id)))
     linkfile = '/'.join((DOWNLOADS_DIR, newspiece.id, 'links.txt'))
     if 'links.txt' not in files:
@@ -172,47 +208,38 @@ async def register_and_create(newspiece, sema):
         async with aiofiles.open(linkfile, 'w') as f:
             await f.writelines(buffer)
 
+    # Gettings comments page link from <links.txt>
     async with aiofiles.open(linkfile, 'r') as f_r:
         links = await f_r.readlines()
     links = [link[:-1] for link in links]
     comments_page = links[0]
 
-    # slow download logic
-    async def slow_download():
-        logging.debug('Waiting for download slot')
-        async with sema:
-            logging.debug('Ask comments for %s' % newspiece.id)
-            comments_html = await download_page(comments_page)
-        return comments_html
-
-    for i in range(MAX_RETRY):
-        comments_html = ''
-        try:
-            comments_html = await slow_download()
-            if comments_html.startswith('<html>'):
-                raise ConnectionRefusedError('Server not able to serve reqs')
-        except ConnectionRefusedError:
-            await asyncio.sleep(random.randint(1, 15)/10 + i/2)
-
+    # Download comments page from ycombinator
+    # use slow_download() to prevent errors
+    error_condition = lambda x: x.startswith('<html>')  # noqa E731
+    comments_html = await slow_download(url=comments_page,
+                                        sema=sema,
+                                        target_name=newspiece.id,
+                                        error_condition=error_condition)
     if not comments_html:
         logging.error('Could not get comments page for %s' % newspiece.id)
         return
 
-    logging.debug('Parsing comments for %s' % newspiece.id)
+    # Parse comments_page and get new links
     links_from_comments = parse_comments_page(comments_html)
-
-    logging.info(
-        'Got %s links from comments %s' % (len(links_from_comments),
-                                           newspiece.id)
-    )
     links_to_append = list(set(links_from_comments) - set(links))
-    if links_to_append:
-        logging.debug(
-            'Appending %s new links into %s' % (len(links_from_comments),
-                                                newspiece.id)
-        )
-        async with aiofiles.open(linkfile, 'a') as f_a:
-            await f_a.writelines([lnk + '\n' for lnk in links_to_append])
+    logging.debug(
+        'Got %s new links from comments %s' % (len(links_from_comments),
+                                               newspiece.id)
+    )
+
+    # Save new links
+    if not links_to_append:
+        return
+    logging.debug('Appending %s new links into %s' % (len(links_to_append),
+                                                      newspiece.id))
+    async with aiofiles.open(linkfile, 'a') as f_a:
+        await f_a.writelines([lnk + '\n' for lnk in links_to_append])
 
 
 async def worker(name, queue):
@@ -238,7 +265,7 @@ async def cycle():
     logging.info('Registering incoming news...')
     sema = asyncio.Semaphore(3)
     registrators = [
-        register_and_create(newspiece, sema)
+        register(newspiece, sema)
         for newspiece in news_list
     ]
     await asyncio.gather(*registrators, return_exceptions=True)
