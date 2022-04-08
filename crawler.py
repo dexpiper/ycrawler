@@ -26,7 +26,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=5)
 MAX_CONNECTIONS = 5
 MAX_RETRY = 3
 MAX_WORKERS = 5
-PERIOD = 60
+PERIOD = 60  # in seconds
 DOWNLOADS_DIR = 'downloads'
 number_pattern = re.compile(r'\n(\d{1,2})\.')
 name_pattern = re.compile(r'\n\d+\. (.*)')
