@@ -123,12 +123,18 @@ def parse_comments_page(html: str) -> list[str]:
 
 async def fetch(session, page):
     html = ''
-    try:
-        async with session.get(page) as response:
-            html = await response.text()
-    except Exception as exc:
-        err = type(exc).__name__
-        logging.error('%s: Cannot get %s' % (err, page))
+    for i in range(MAX_RETRY):
+        try:
+            async with session.get(page) as response:
+                html = await response.text()
+                break
+        except TimeoutError:
+            await asyncio.sleep(random.randint(1, 3)/10 + 2*i/10)
+            continue
+        except Exception as exc:
+            err = type(exc).__name__
+            logging.error('%s: Cannot get %s' % (err, page))
+            break
     return html
 
 
