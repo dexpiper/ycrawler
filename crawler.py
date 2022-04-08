@@ -15,7 +15,7 @@ import aiofiles
 import aiofiles.os
 from bs4 import BeautifulSoup
 
-from thetypes import NewsItem, Counter
+from thetypes import NewsItem, Counter, Tracker
 
 
 ROOTPAGE = 'https://news.ycombinator.com/'
@@ -28,11 +28,21 @@ DOWNLOADS_DIR = 'downloads'
 number_pattern = re.compile(r'\n(\d{1,2})\.')
 name_pattern = re.compile(r'\n\d+\. (.*)')
 counter = Counter()
+tracker = Tracker()
 
 
 def get_filename(filename: str):
     h = hashlib.md5(bytes(filename, encoding='utf8'))
     return h.hexdigest()
+
+
+def get_only_new(newslist: list[NewsItem]):
+    try:
+        registered_news = os.listdir(DOWNLOADS_DIR)
+    except FileNotFoundError:
+        return newslist
+    else:
+        return [el for el in newslist if el.id not in registered_news]
 
 
 def get_extra_links(dirname: str, links: list[str]):
@@ -129,7 +139,7 @@ async def fetch(session, page):
                 html = await response.text()
                 break
         except TimeoutError:
-            await asyncio.sleep(random.randint(1, 3)/10 + 2*i/10)
+            await asyncio.sleep(random.randint(1, 3)/10 + round(2*i/10))
             continue
         except Exception as exc:
             err = type(exc).__name__
@@ -162,7 +172,7 @@ async def slow_download(url: str, sema: asyncio.Semaphore,
         True or False
     """
     result = ''
-    for i in range(retry_for):
+    for i in range(retry_for * 2):
         try:
             logging.debug('Waiting for download slot')
             async with sema:
@@ -171,7 +181,8 @@ async def slow_download(url: str, sema: asyncio.Semaphore,
                     raise ConnectionRefusedError(
                         'Server not able to serve reqs')
         except ConnectionRefusedError:
-            await asyncio.sleep(random.randint(1, 15)/10 + i/2)
+            result = ''
+            await asyncio.sleep(random.randint(5, 20)/10 + i)
     if result:
         global counter
         await counter.incr_download()
@@ -217,8 +228,11 @@ async def register(newspiece: NewsItem, sema: asyncio.Semaphore):
                                         sema=sema,
                                         target_name=newspiece.id,
                                         error_condition=error_condition)
+
     if not comments_html:
         logging.error('Could not get comments page for %s' % newspiece.id)
+        global tracker
+        await tracker.append(newspiece)
         return
 
     # Parse comments_page and get new links
@@ -252,21 +266,51 @@ async def worker(name, queue):
             queue.task_done()
 
 
-async def cycle():
-    global counter
+async def cycle(startflag=None):
+    """
+    One cycle of parsing and downloading.
+    * getting and parsing main page
+    * making dirs and files to store news and urls
+    * downloading comments for each page, parsing
+        and saving links
+    * downloading html for every registered outbound url
+    """
+    global counter, tracker
     await counter.zero()
     logging.info('Getting news list...')
     main_html = await download_page(ROOTPAGE)
-    news_list = parse_news_list(main_html)
+    news_list = get_only_new(parse_news_list(main_html))
+
+    # adding unregistered news from previous cycle, if any
+    news_list = news_list + tracker.unregistered
+    await tracker.zero()
+
+    if not news_list:
+        logging.info('Everything is up-to-date. Idle...')
+        return
+
     logging.info('Making dirs...')
     await make_dirs([piece.id for piece in news_list])
-    logging.info('Registering incoming news...')
-    sema = asyncio.Semaphore(3)
+
+    phrase = 'It could take 2-3 min'
+    add_this_to_log = '' if not startflag else phrase
+    logging.info('Registering incoming news... %s' % add_this_to_log)
+
+    sema = asyncio.Semaphore(1)
     registrators = [
         register(newspiece, sema)
         for newspiece in news_list
     ]
     await asyncio.gather(*registrators, return_exceptions=True)
+
+    if tracker.unregistered:
+        logging.info("We'll try to download unregistered items in next cycle")
+
+    news_to_download = [el.id for el in news_list]
+
+    if not news_to_download:
+        logging.info('Nothing to download yet. Idle...')
+        return
 
     logging.info('Init downloading...')
     queue = asyncio.Queue(maxsize=10)
@@ -277,7 +321,7 @@ async def cycle():
         )
         tasks.append(task)
 
-    news_folders = os.listdir(DOWNLOADS_DIR)
+    news_folders = news_to_download
     for folder in news_folders:
         linkfile = '/'.join((DOWNLOADS_DIR, folder, 'links.txt'))
         async with aiofiles.open(linkfile, 'r') as f:
@@ -291,7 +335,7 @@ async def cycle():
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     logging.info(
-        'Total downloaded: %s; '
+        'Total downloaded pages: %s; '
         'total new pages saved: %s' % (
             counter.total_downloads,
             counter.total_saved_files
@@ -300,10 +344,17 @@ async def cycle():
 
 
 async def main():
-    while True:
-        await cycle()
-        await asyncio.sleep(PERIOD)
-
+    startflag = True
+    try:
+        while True:
+            start = time.time()
+            await cycle(startflag)
+            elapsed = round(time.time() - start, 2)
+            logging.info('Last cycle completed in %s sec' % elapsed)
+            startflag = False
+            await asyncio.sleep(PERIOD)
+    except KeyboardInterrupt:
+        return
 
 if __name__ == '__main__':
     op = OptionParser()
@@ -320,8 +371,16 @@ if __name__ == '__main__':
     try:
         start = time.time()
         asyncio.run(main())
-        elapsed = round(time.time() - start, 2)
-        logging.info('Completed in %s sec' % elapsed)
+    except KeyboardInterrupt:
+        elapsed = time.time() - start
+        units = ('sec', 'min', 'h')
+        for i in range(3):
+            if elapsed > 60:
+                elapsed = round(elapsed / 60, 2)
+            else:
+                break
+        unit = units[i]
+        logging.info('Worked for %s %s' % (elapsed, unit))
     except Exception as e:
         logging.exception('Unexpected error: %s' % e)
         sys.exit(1)

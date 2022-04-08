@@ -31,3 +31,23 @@ class Counter:
         async with self.lock:
             self.total_downloads = 0
             self.total_saved_files = 0
+
+
+class Tracker:
+    """
+    Stores unregistered news items between cycles
+    """
+    def __init__(self):
+        self.unregistered: list[NewsItem] = []
+        self.lock = asyncio.Lock()
+
+    async def append(self, item):
+        async with self.lock:
+            self.unregistered.append(item)
+
+    async def zero(self):
+        """
+        Zero unregistered news list
+        """
+        async with self.lock:
+            self.unregistered: list[NewsItem] = []
