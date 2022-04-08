@@ -2,6 +2,7 @@ import re
 import os
 import sys
 import time
+import random
 import asyncio
 import hashlib
 import logging
@@ -158,7 +159,7 @@ async def download_page(page, client=None):
     return html
 
 
-async def register_and_create(newspiece):
+async def register_and_create(newspiece, sema):
     files = os.listdir('/'.join((DOWNLOADS_DIR, newspiece.id)))
     linkfile = '/'.join((DOWNLOADS_DIR, newspiece.id, 'links.txt'))
     if 'links.txt' not in files:
@@ -175,8 +176,27 @@ async def register_and_create(newspiece):
         links = await f_r.readlines()
     links = [link[:-1] for link in links]
     comments_page = links[0]
-    logging.debug('Ask comments for %s' % newspiece.id)
-    comments_html = await download_page(comments_page)
+
+    # slow download logic
+    async def slow_download():
+        logging.debug('Waiting for download slot')
+        async with sema:
+            logging.debug('Ask comments for %s' % newspiece.id)
+            comments_html = await download_page(comments_page)
+        return comments_html
+
+    for i in range(MAX_RETRY):
+        comments_html = ''
+        try:
+            comments_html = await slow_download()
+            if comments_html.startswith('<html>'):
+                raise ConnectionRefusedError('Server not able to serve reqs')
+        except ConnectionRefusedError:
+            await asyncio.sleep(random.randint(1, 15)/10 + i/2)
+
+    if not comments_html:
+        logging.error('Could not get comments page for %s' % newspiece.id)
+        return
 
     logging.debug('Parsing comments for %s' % newspiece.id)
     links_from_comments = parse_comments_page(comments_html)
@@ -216,8 +236,9 @@ async def cycle():
     logging.info('Making dirs...')
     await make_dirs([piece.id for piece in news_list])
     logging.info('Registering incoming news...')
+    sema = asyncio.Semaphore(3)
     registrators = [
-        register_and_create(newspiece)
+        register_and_create(newspiece, sema)
         for newspiece in news_list
     ]
     await asyncio.gather(*registrators, return_exceptions=True)
