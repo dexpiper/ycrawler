@@ -1,4 +1,3 @@
-import re
 import os
 import sys
 import time
@@ -15,18 +14,10 @@ import aiofiles
 import aiofiles.os
 from bs4 import BeautifulSoup
 
+from config import (ROOTPAGE, TIMEOUT, MAX_RETRY,
+                    MAX_WORKERS, PERIOD, DOWNLOADS_DIR)
 from thetypes import NewsItem, counter, tracker
-
-
-ROOTPAGE = 'https://news.ycombinator.com/'
-TIMEOUT = aiohttp.ClientTimeout(total=5)
-MAX_CONNECTIONS = 5
-MAX_RETRY = 3
-MAX_WORKERS = 5
-PERIOD = 60  # in seconds
-DOWNLOADS_DIR = 'downloads'
-number_pattern = re.compile(r'\n(\d{1,2})\.')
-name_pattern = re.compile(r'\n\d+\. (.*)')
+from config import name_pattern
 
 
 def get_filename(filename: str):
@@ -373,7 +364,7 @@ if __name__ == '__main__':
             else:
                 break
         unit = units[i]
-        logging.info('Worked for %s %s' % (elapsed, unit))
+        logging.info('Worked for %s %s' % (round(elapsed, 2), unit))
     except Exception as e:
         logging.exception('Unexpected error: %s' % e)
         sys.exit(1)
