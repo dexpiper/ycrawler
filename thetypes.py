@@ -51,3 +51,7 @@ class Tracker:
         """
         async with self.lock:
             self.unregistered: list[NewsItem] = []
+
+
+tracker = Tracker()
+counter = Counter()

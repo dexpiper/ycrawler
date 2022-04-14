@@ -15,7 +15,7 @@ import aiofiles
 import aiofiles.os
 from bs4 import BeautifulSoup
 
-from thetypes import NewsItem, Counter, Tracker
+from thetypes import NewsItem, counter, tracker
 
 
 ROOTPAGE = 'https://news.ycombinator.com/'
@@ -27,8 +27,6 @@ PERIOD = 60  # in seconds
 DOWNLOADS_DIR = 'downloads'
 number_pattern = re.compile(r'\n(\d{1,2})\.')
 name_pattern = re.compile(r'\n\d+\. (.*)')
-counter = Counter()
-tracker = Tracker()
 
 
 def get_filename(filename: str):
@@ -69,7 +67,6 @@ async def save_file(newsdir, filename, content):
     async with aiofiles.open(path, 'w') as f:
         await f.write(content)
     logging.debug('File %s saved' % filename)
-    global counter
     await counter.incr_files()
 
 
@@ -157,7 +154,6 @@ async def download_page(page, client=None, register_count=True):
         html = await fetch(client, page)
         logging.debug('Success: %s...' % page[:20])
     if html and register_count:
-        global counter
         await counter.incr_download()
     return html
 
@@ -184,7 +180,6 @@ async def slow_download(url: str, sema: asyncio.Semaphore,
             result = ''
             await asyncio.sleep(random.randint(5, 20)/10 + i)
     if result:
-        global counter
         await counter.incr_download()
     return result
 
@@ -231,7 +226,6 @@ async def register(newspiece: NewsItem, sema: asyncio.Semaphore):
 
     if not comments_html:
         logging.error('Could not get comments page for %s' % newspiece.id)
-        global tracker
         await tracker.append(newspiece)
         return
 
@@ -275,7 +269,6 @@ async def cycle(startflag=None):
         and saving links
     * downloading html for every registered outbound url
     """
-    global counter, tracker
     await counter.zero()
     logging.info('Getting news list...')
     main_html = await download_page(ROOTPAGE)
@@ -303,7 +296,7 @@ async def cycle(startflag=None):
     ]
     await asyncio.gather(*registrators, return_exceptions=True)
 
-    if tracker.unregistered:
+    if tracker.unregistered:  # unregistered from current cycle
         logging.info("We'll try to download unregistered items in next cycle")
 
     news_to_download = [el.id for el in news_list]
